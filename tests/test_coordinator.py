@@ -109,7 +109,7 @@ async def test_coordinator_successful_update(coordinator, mock_http_session, scr
     assert coordinator.last_update_success
     assert not coordinator.update_error
     # Verify the scraper received the content
-    assert scraper._data == "<html>Updated Content</html>"
+    assert coordinator.snapshot.raw_content == "<html>Updated Content</html>"
 
 
 @pytest.mark.integration
@@ -196,7 +196,7 @@ async def test_coordinator_with_zero_scan_interval(
     await coordinator.async_request_refresh()
     await hass.async_block_till_done()
 
-    assert scraper._data == "<html>Manual Update</html>"
+    assert scraper.snapshot.raw_content == "<html>Manual Update</html>"
     assert coordinator.last_update_success
 
     await coordinator.async_shutdown()
@@ -307,7 +307,7 @@ async def test_coordinator_retry_is_actually_executed_by_hass(
     assert mock_http_session.async_request.call_count == 2
     assert coordinator._retry_count == 0
     assert coordinator._retry_unsub is None
-    assert scraper._data == "<html>Recovered</html>"
+    assert scraper.snapshot.raw_content == "<html>Recovered</html>"
 
     # Nothing is left armed to fire again
     freezer.tick(timedelta(seconds=RETRY_DELAY_SECONDS + 1))

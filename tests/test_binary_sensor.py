@@ -742,7 +742,7 @@ async def test_binary_sensor_uses_value_selected_off_the_event_loop(
         await binary_sensor.async_added_to_hass()
 
     await scraper.set_content('<div class="availability">on</div>')
-    assert scraper._extracted[binary_sensor._sensor_selector] == "on"
+    assert scraper.snapshot.extracted[binary_sensor._sensor_selector] == "on"
 
     with patch.object(scraper, "_extract_value", side_effect=AssertionError("selected on the loop")):
         binary_sensor._handle_coordinator_update()

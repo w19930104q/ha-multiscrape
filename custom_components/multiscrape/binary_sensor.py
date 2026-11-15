@@ -145,8 +145,10 @@ class MultiscrapeBinarySensor(MultiscrapeEntity, BinarySensorEntity):
         """
         self._attr_is_on = value == STATE_ON
 
-    def _update_sensor(self):
-        """Update state from the scraped data."""
+    def _update_sensor(self, snapshot=None):
+        """Update state from the given snapshot (default: the coordinator's)."""
+        if snapshot is None:
+            snapshot = self.coordinator.snapshot
         _LOGGER.debug(
             "%s # %s # Start scraping to update sensor", self.scraper.name, self._name
         )
@@ -155,9 +157,11 @@ class MultiscrapeBinarySensor(MultiscrapeEntity, BinarySensorEntity):
             if self.coordinator.update_error is True:
                 raise ValueError(
                     "Skipped scraping because data couldn't be updated")
+            if snapshot is None:
+                raise ValueError(
+                    "Skipped scraping because no snapshot has been published yet")
 
-            value = self.scraper.scrape(
-                self._sensor_selector, self._name, context=self.coordinator.scrape_context)
+            value = snapshot.scrape(self._sensor_selector, self._name)
             self._attr_is_on = self._parse_value(value)
 
             _LOGGER.debug(

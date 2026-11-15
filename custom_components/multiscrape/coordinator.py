@@ -19,6 +19,7 @@ from .file import LoggingFileManager
 from .http_session import HttpSession
 from .scrape_context import ScrapeContext
 from .scraper import Scraper
+from .snapshot import ScrapeSnapshot
 from .util import create_renderer
 
 _LOGGER = logging.getLogger(__name__)
@@ -200,10 +201,20 @@ class MultiscrapeDataUpdateCoordinator(TimestampDataUpdateCoordinator[None]):
                 force_reauth=self._force_reauth
             )
             self._force_reauth = False
-            await self._scraper.set_content(response)
+            # The previous snapshot stays published while the new one is
+            # built, so entities updating meanwhile still read a complete
+            # page. Publication is a single atomic assignment.
+            snapshot = await self._scraper.set_content(
+                response,
+                context=ScrapeContext(
+                    form_variables=self._request_manager.form_variables
+                ),
+            )
             _LOGGER.debug(
-                "%s # Data successfully refreshed. Sensors will now start scraping to update.",
+                "%s # Data successfully refreshed. Published snapshot observed at %s. "
+                "Sensors will now start scraping to update.",
                 self._config_name,
+                snapshot.observed_at,
             )
             self._retry_count = 0
 
@@ -214,7 +225,9 @@ class MultiscrapeDataUpdateCoordinator(TimestampDataUpdateCoordinator[None]):
                 self._config_name,
                 ex,
             )
-            self._scraper.reset()
+            # The last successfully published snapshot is kept: entities go
+            # through their on_error handling via update_error instead of
+            # re-scraping it, and a recovered run replaces it atomically.
             self.update_error = True
             if self._shutdown_requested:
                 # A run still in flight when the coordinator was shut down (e.g. on
@@ -296,7 +309,14 @@ class MultiscrapeDataUpdateCoordinator(TimestampDataUpdateCoordinator[None]):
                     ex,
                 )
 
-        self._scraper.reset()
+        # The current snapshot is deliberately NOT unpublished here: it stays
+        # readable until the run publishes its replacement, so entities never
+        # observe a scraped-clean scraper mid-refresh.
+
+    @property
+    def snapshot(self) -> ScrapeSnapshot | None:
+        """Return the latest published snapshot, None before the first success."""
+        return self._scraper.snapshot
 
     @property
     def scrape_context(self) -> ScrapeContext:

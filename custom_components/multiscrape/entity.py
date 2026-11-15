@@ -130,8 +130,18 @@ class MultiscrapeEntity(CoordinatorEntity[MultiscrapeDataUpdateCoordinator], Res
             )
         else:
             self._scrape_error = False
-            self._update_sensor()
-            self._update_attributes()
+            # Pin one snapshot for this whole update: the state and all
+            # attributes must come from the same page, even when the next
+            # refresh publishes a new snapshot right afterwards.
+            snapshot = self.coordinator.snapshot
+            _LOGGER.debug(
+                "%s # %s # Updating from snapshot observed at %s",
+                self.scraper.name,
+                self._name,
+                snapshot.observed_at if snapshot else None,
+            )
+            self._update_sensor(snapshot)
+            self._update_attributes(snapshot)
         self.async_write_ha_state()
         _LOGGER.debug(
             "%s # %s # Sensor updated and state written to HA",
@@ -148,10 +158,13 @@ class MultiscrapeEntity(CoordinatorEntity[MultiscrapeDataUpdateCoordinator], Res
         """
 
     @abstractmethod
-    def _update_sensor(self):
-        """Update state from the scraper data."""
+    def _update_sensor(self, snapshot=None):
+        """Update state from the given snapshot (default: the coordinator's)."""
 
-    def _update_attributes(self):
+    def _update_attributes(self, snapshot=None):
+        """Update attributes from the given snapshot (default: the coordinator's)."""
+        if snapshot is None:
+            snapshot = self.coordinator.snapshot
         if self._attribute_selectors:
             _LOGGER.debug(
                 "%s # %s # Start scraping attributes",
@@ -164,8 +177,7 @@ class MultiscrapeEntity(CoordinatorEntity[MultiscrapeDataUpdateCoordinator], Res
             )
             for name, attr_selector in self._attribute_selectors.items():
                 try:
-                    attr_value = self.scraper.scrape(
-                        attr_selector, self._name, name, context=self.coordinator.scrape_context)
+                    attr_value = snapshot.scrape(attr_selector, self._name, name)
                     self._attr_extra_state_attributes[name] = attr_value
                 except Exception as exception:
                     _LOGGER.debug(

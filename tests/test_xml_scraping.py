@@ -61,9 +61,9 @@ class TestXmlBasicParsing:
         """Test that XML content is parsed into a BeautifulSoup object."""
         await xml_scraper.set_content(SAMPLE_XML_WEATHER)
 
-        assert xml_scraper._soup is not None
-        assert xml_scraper._data == SAMPLE_XML_WEATHER
-        assert xml_scraper._is_json is False
+        assert xml_scraper.snapshot.soup is not None
+        assert xml_scraper.snapshot.raw_content == SAMPLE_XML_WEATHER
+        assert xml_scraper.snapshot.is_json is False
 
     @pytest.mark.integration
     @pytest.mark.async_test
@@ -72,7 +72,7 @@ class TestXmlBasicParsing:
         """Test that an empty XML root element is parsed without error."""
         await xml_scraper.set_content(SAMPLE_XML_EMPTY)
 
-        assert xml_scraper._soup is not None
+        assert xml_scraper.snapshot.soup is not None
 
     @pytest.mark.integration
     @pytest.mark.async_test
@@ -934,7 +934,7 @@ class TestXmlErrorHandling:
         await xml_scraper.set_content(SAMPLE_XML_MALFORMED)
 
         # Should be parseable (lxml parser is lenient with XML)
-        assert xml_scraper._soup is not None
+        assert xml_scraper.snapshot.soup is not None
 
     @pytest.mark.integration
     @pytest.mark.async_test
@@ -975,7 +975,7 @@ class TestXmlParserFactory:
         """Test that XML content is not mistakenly detected as JSON."""
         await xml_scraper.set_content(SAMPLE_XML_WEATHER)
 
-        assert xml_scraper._is_json is False
+        assert xml_scraper.snapshot.is_json is False
 
     @pytest.mark.integration
     @pytest.mark.async_test
@@ -985,5 +985,5 @@ class TestXmlParserFactory:
         content = "   \n" + SAMPLE_XML_WEATHER
         await xml_scraper.set_content(content)
 
-        assert xml_scraper._is_json is False
-        assert xml_scraper._soup is not None
+        assert xml_scraper.snapshot.is_json is False
+        assert xml_scraper.snapshot.soup is not None

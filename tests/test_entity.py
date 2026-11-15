@@ -670,7 +670,7 @@ async def test_async_added_to_hass_registers_selectors_with_scraper(
         await sensor.async_added_to_hass()
 
     await scraper.set_content(SAMPLE_HTML_FULL)
-    assert set(scraper._extracted) == {sensor._sensor_selector, attr_selector}
+    assert set(scraper.snapshot.extracted) == {sensor._sensor_selector, attr_selector}
 
     sensor._handle_coordinator_update()
     assert sensor.native_value == "Current Version: 2024.8.3"
@@ -716,7 +716,7 @@ async def test_precomputed_errors_go_through_on_error(
     with patch.object(sensor, "async_get_last_state", new=AsyncMock(return_value=None)):
         await sensor.async_added_to_hass()
     await scraper.set_content(SAMPLE_HTML_FULL)
-    assert isinstance(scraper._extracted[sensor_selector], ValueError)
+    assert isinstance(scraper.snapshot.extracted[sensor_selector], ValueError)
 
     sensor._handle_coordinator_update()
 

@@ -157,10 +157,10 @@ async def test_scraper_handles_json_content(hass: HomeAssistant, scraper_instanc
     await scraper_instance.set_content(SAMPLE_JSON_SIMPLE)
 
     # JSON content should not be parsed by BeautifulSoup
-    assert scraper_instance._soup is None
+    assert scraper_instance.snapshot.soup is None
     # Raw data is preserved for value_template (the canonical HA JSON path)
-    assert scraper_instance._data == SAMPLE_JSON_SIMPLE
-    assert scraper_instance._is_json is True
+    assert scraper_instance.snapshot.raw_content == SAMPLE_JSON_SIMPLE
+    assert scraper_instance.snapshot.is_json is True
 
 
 @pytest.mark.integration
@@ -191,30 +191,27 @@ async def test_scraper_json_without_value_template_raises_error(
 @pytest.mark.async_test
 @pytest.mark.timeout(5)
 async def test_scraper_reset_clears_content(hass: HomeAssistant, scraper_instance):
-    """Test that reset() clears HTML soup and JSON state."""
+    """Test that reset() unpublishes the current snapshot."""
     # Arrange — first an HTML cycle
     await scraper_instance.set_content(SAMPLE_HTML_FULL)
-    assert scraper_instance._data is not None
-    assert scraper_instance._soup is not None
+    assert scraper_instance.snapshot is not None
+    assert scraper_instance.snapshot.soup is not None
 
     # Act
     scraper_instance.reset()
 
     # Assert
-    assert scraper_instance._data is None
-    assert scraper_instance._soup is None
-    assert scraper_instance._is_json is False
+    assert scraper_instance.snapshot is None
 
     # Arrange — now a JSON cycle
     await scraper_instance.set_content(SAMPLE_JSON_SIMPLE)
-    assert scraper_instance._is_json is True
+    assert scraper_instance.snapshot.is_json is True
 
     # Act
     scraper_instance.reset()
 
     # Assert
-    assert scraper_instance._data is None
-    assert scraper_instance._is_json is False
+    assert scraper_instance.snapshot is None
 
 
 @pytest.mark.integration
@@ -230,9 +227,9 @@ async def test_scraper_handles_empty_content(hass: HomeAssistant, scraper_instan
     await scraper_instance.set_content(SAMPLE_HTML_EMPTY)
 
     # Assert
-    assert scraper_instance._data == SAMPLE_HTML_EMPTY
+    assert scraper_instance.snapshot.raw_content == SAMPLE_HTML_EMPTY
     # BeautifulSoup creates an empty soup object for empty string
-    assert scraper_instance._soup is not None
+    assert scraper_instance.snapshot.soup is not None
 
 
 @pytest.mark.integration
@@ -244,7 +241,7 @@ async def test_scraper_handles_malformed_html(hass: HomeAssistant, scraper_insta
     await scraper_instance.set_content(SAMPLE_HTML_MALFORMED)
 
     # Assert - BeautifulSoup should parse it without raising
-    assert scraper_instance._soup is not None
+    assert scraper_instance.snapshot.soup is not None
     # Can still extract from the parsed structure
     selector_config = {
         "select": Template(".unclosed", hass),
@@ -312,8 +309,8 @@ async def test_scraper_handles_malformed_json_softly(
     await scraper_instance.set_content(SAMPLE_JSON_INVALID)
 
     # Assert state
-    assert scraper_instance._is_json is True
-    assert scraper_instance._data == SAMPLE_JSON_INVALID
+    assert scraper_instance.snapshot.is_json is True
+    assert scraper_instance.snapshot.raw_content == SAMPLE_JSON_INVALID
     # formatted_content falls back to raw when pretty-print fails
     assert scraper_instance.formatted_content == SAMPLE_JSON_INVALID
 
@@ -337,13 +334,13 @@ async def test_scraper_handles_recursion_error_softly(
     # varies across environments. Simulate the failure mode directly so the test
     # is deterministic and doesn't produce huge debug output on CI.
     await scraper_instance.set_content(SAMPLE_JSON_SIMPLE)
-    assert scraper_instance._is_json is True
+    assert scraper_instance.snapshot.is_json is True
 
     def boom(*_args, **_kwargs):
         raise RecursionError("simulated deeply-nested JSON")
 
     monkeypatch.setattr(
-        "custom_components.multiscrape.scraper.json.loads", boom
+        "custom_components.multiscrape.snapshot.json.loads", boom
     )
 
     # formatted_content falls back to raw on RecursionError
@@ -494,7 +491,7 @@ async def test_scraper_selects_registered_selectors_off_the_event_loop(
 
         # scrape() reads the precomputed values and doesn't select again.
         assert scraper_instance.scrape(single, "single") == "CURRENT VERSION: 2024.8.3"
-        assert scraper_instance.scrape(listed, "listed") == scraper_instance._extracted[listed]
+        assert scraper_instance.scrape(listed, "listed") == scraper_instance.snapshot.extracted[listed]
         assert len(threads) == 2
 
 
@@ -532,13 +529,15 @@ async def test_scraper_unregistered_selector_falls_back_to_selecting_in_scrape(
     selector = Selector(hass, {"name": "s", "select": Template(".current-version h1", hass)})
     unregister = scraper_instance.register_selectors([selector])
     await scraper_instance.set_content(SAMPLE_HTML_FULL)
-    assert selector in scraper_instance._extracted
+    assert selector in scraper_instance.snapshot.extracted
 
     unregister()
-    assert selector not in scraper_instance._extracted
+    # Published snapshots are immutable: unregistering does not reach back
+    # into the current one, it only affects snapshots built afterwards.
+    assert selector in scraper_instance.snapshot.extracted
 
     await scraper_instance.set_content(SAMPLE_HTML_FULL)
-    assert scraper_instance._extracted == {}
+    assert scraper_instance.snapshot.extracted == {}
     assert scraper_instance.scrape(selector, "s") == "Current Version: 2024.8.3"
 
 
@@ -554,7 +553,7 @@ async def test_scraper_new_content_replaces_precomputed_values(
     await scraper_instance.set_content(SAMPLE_HTML_FULL)
 
     scraper_instance.reset()
-    assert scraper_instance._extracted == {}
+    assert scraper_instance.snapshot is None
 
     await scraper_instance.set_content(SAMPLE_JSON_SIMPLE)
     with pytest.raises(ValueError, match="JSON cannot be scraped"):
@@ -564,12 +563,19 @@ async def test_scraper_new_content_replaces_precomputed_values(
 @pytest.mark.integration
 @pytest.mark.async_test
 @pytest.mark.timeout(5)
-async def test_scraper_discards_results_for_replaced_content(
+async def test_scraper_old_snapshot_stays_published_while_new_one_is_built(
     hass: HomeAssistant, scraper_instance
 ):
-    """A reset while the executor job runs must not resurrect its results."""
+    """A slow build never leaves the scraper in a half-updated state.
+
+    While the executor job for the new content runs, readers still see the
+    complete previous snapshot; the new one appears only through the single
+    atomic assignment that publishes it.
+    """
     selector = Selector(hass, {"name": "s", "select": Template(".current-version h1", hass)})
     scraper_instance.register_selectors([selector])
+    await scraper_instance.set_content(SAMPLE_HTML_FULL)
+    first_snapshot = scraper_instance.snapshot
 
     started = threading.Event()
     release = threading.Event()
@@ -582,15 +588,18 @@ async def test_scraper_discards_results_for_replaced_content(
 
     # A plain function, as the test harness runs Mock executor targets inline.
     scraper_instance._extract_batch = _blocking_batch
-    task = hass.async_create_task(scraper_instance.set_content(SAMPLE_HTML_FULL))
+    task = hass.async_create_task(scraper_instance.set_content(SAMPLE_HTML_LIST))
 
-    # Reset while the executor job is still running, then let it finish.
+    # While the executor job is still running, the previous snapshot is untouched.
     await hass.async_add_executor_job(started.wait, 5)
-    scraper_instance.reset()
+    assert scraper_instance.snapshot is first_snapshot
+    assert scraper_instance.scrape(selector, "s") == "Current Version: 2024.8.3"
+
     release.set()
     await task
 
-    assert scraper_instance._extracted == {}
+    assert scraper_instance.snapshot is not first_snapshot
+    assert scraper_instance.snapshot.raw_content == SAMPLE_HTML_LIST
 
 
 @pytest.mark.integration
@@ -604,7 +613,7 @@ async def test_scraper_register_selectors_ignores_just_value_selectors(
     scraper_instance.register_selectors([selector])
     await scraper_instance.set_content(SAMPLE_HTML_FULL)
 
-    assert selector not in scraper_instance._extracted
+    assert selector not in scraper_instance.snapshot.extracted
     assert scraper_instance.scrape(selector, "v") == 42
 
 
